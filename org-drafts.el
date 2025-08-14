@@ -53,17 +53,6 @@
   "Capture drafts that begin in the Org-capture buffer."
   :group 'org)
 
-(cl-defun org-drafts-change (keyword)
-  "Change the heading keyword of a draft entry to KEYWORD.
-This function changes the heading keyword of the current Org-capture buffer
-and finalizes the capture if in capture mode."
-  (interactive)
-  (goto-char (point-min))
-  (re-search-forward "^\\*+ \\(DRAFT\\|SCRAP\\) ")
-  (replace-match keyword t t nil 1)
-  (when org-capture-mode
-    (org-capture-finalize current-prefix-arg)))
-
 (defvar org-drafts--text
   "Store the text content of the current Org draft.")
 
@@ -99,12 +88,10 @@ This function is used to change a draft's heading keyword and process
 its content."
   (declare (indent 1))
   (org-drafts-with
-    (lambda ()
-      (when (looking-at "^\\*+ \\(DRAFT\\|SCRAP\\) ")
-        (replace-match keyword t t nil 1)))
-    (lambda ()
-      (org-capture-finalize current-prefix-arg))
-    body-func))
+   (lambda () (when (looking-at "^\\*+ \\(DRAFT\\|SCRAP\\) ")
+           (replace-match keyword t t nil 1)))
+   (lambda () (org-capture-finalize current-prefix-arg))
+   body-func))
 
 (defsubst org-drafts-change (keyword)
   "Call `org-drafts-with-change-to' but with no body function.
@@ -173,8 +160,8 @@ Uses Gnus mail user agent to compose a new email with the draft content."
 (pretty-hydra-define org-drafts
   (:color teal :quit-key "q")
   ("Org"
-   (("N"   (org-drafts-change "NOTE") "NOTE")
-    ("T"   (org-drafts-change "TODO") "TODO")
+   (("n"   (org-drafts-change "NOTE") "NOTE")
+    ("t"   (org-drafts-change "TODO") "TODO")
     ("d"   org-capture-finalize "DRAFT")
     ("C-c" org-capture-finalize "DRAFT"))
    "Utils"
@@ -191,7 +178,7 @@ Uses Gnus mail user agent to compose a new email with the draft content."
     ("p"   org-drafts-perplexity "Perplexity")
     ("C-s" org-drafts-perplexity "Perplexity")
     ("m"   org-drafts-email "Email"))
-  "This hydra menu provides quick actions for handling Org drafts"))
+   "This hydra menu provides quick actions for handling Org drafts"))
 
 (defun org-drafts-action (&optional arg)
   "Handle the finalization of a draft.
