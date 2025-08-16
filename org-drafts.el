@@ -135,14 +135,16 @@ Creates a new GPTel chat buffer with the draft content and sends it."
 Changes heading to SCRAP before sending query."
   (interactive)
   (org-drafts-with-change-to "SCRAP"
-    (lambda (str) (browse-url (concat "https://kagi.com/search?q=" str)))))
+    (lambda (str) (browse-url (concat "https://kagi.com/search?q="
+                                 (url-hexify-string str))))))
 
 (defun org-drafts-perplexity ()
   "Submit draft contents as a search query to Perplexity.ai.
 Changes heading to SCRAP before sending query."
   (interactive)
   (org-drafts-with-change-to "SCRAP"
-    (lambda (str) (browse-url (concat "https://www.perplexity.ai/search/?q=" str
+    (lambda (str) (browse-url (concat "https://www.perplexity.ai/search/?q="
+                                 (url-hexify-string str)
                                  "&copilot=true")))))
 
 (defun org-drafts-email ()
