@@ -53,8 +53,32 @@
   "Capture drafts that begin in the Org-capture buffer."
   :group 'org)
 
+(defcustom org-drafts-task-body-function
+  #'org-drafts-default-body-function
+  "Function to use for processing TODO/NOTE bodies."
+  :type 'function
+  :group 'org-drafts)
+
 (defvar org-drafts--text
   "Store the text content of the current Org draft.")
+
+(defun org-drafts-default-body-function (heading-pos beg end)
+  "Default body function for tasks is to make the body be the title.
+HEADING-POS is a marker set to the beginning of the heading line.
+BEG and END are markers covering the range of the body text."
+  (with-restriction heading-pos end
+    (save-excursion
+      (goto-char (point-min))
+      (goto-char (line-end-position))
+      (backward-kill-sexp)
+      (insert (string-trim
+               (buffer-substring beg
+                                 (save-excursion
+                                   (goto-char beg)
+                                   (line-end-position)))))
+      (goto-char beg)
+      (delete-region (point)
+                     (min (1+ (line-end-position)) (point-max))))))
 
 (defun org-drafts-with (at-heading-func at-capture-end-func body-func)
   "Execute BODY-FUNC with the draft content, modifying it based on heading.
@@ -64,20 +88,21 @@ This function handles the text content of the draft between the heading
 and the next heading or end of buffer."
   (save-excursion
     (org-back-to-heading-or-point-min)
-    (funcall at-heading-func)
-    (forward-line)
-    (when (looking-at-p ":PROPERTIES:")
-      (re-search-forward ":END:")
-      (forward-line))
-    (save-restriction
-      (narrow-to-region (point)
-                        (if org-capture-mode
-                            (point-max)
-                          (save-excursion
-                            (org-next-visible-heading 1)
-                            (point))))
+    (let ((heading-pos (point-marker)))
+      (funcall at-heading-func)
+      (forward-line)
+      (when (looking-at-p ":PROPERTIES:")
+        (re-search-forward ":END:")
+        (forward-line))
       (prog1
-          (funcall body-func (string-trim (buffer-string)))
+          (funcall body-func
+                   heading-pos
+                   (point-marker)
+                   (if org-capture-mode
+                       (point-max-marker)
+                     (save-excursion
+                       (org-next-visible-heading 1)
+                       (point-marker))))
         (when org-capture-mode
           (funcall at-capture-end-func))))))
 
@@ -96,7 +121,7 @@ its content."
 (defsubst org-drafts-change (keyword)
   "Call `org-drafts-with-change-to' but with no body function.
 This results in only the KEYWORD being changed."
-  (org-drafts-with-change-to keyword #'ignore))
+  (org-drafts-with-change-to keyword org-drafts-task-body-function))
 
 (defun org-drafts-copy-to-clipboard (&optional format)
   "Copy draft content to clipboard, changing heading to SCRAP.
@@ -105,47 +130,70 @@ This function copies the draft content to the clipboard, optionally
 formatting it."
   (interactive)
   (org-drafts-with-change-to "SCRAP"
-    (lambda (str)
-      (goto-char (point-max))
-      (while (and (bolp) (not (bobp)))
-        (delete-char -1))
-      (if (string= "ox-slack" format)
-          (org-slack-export-to-clipboard-as-slack)
-        (kill-new
-         (if format
-             (funcall
-              (cadr (assoc format copy-as-format-format-alist))
-              str
-              (use-region-p))
-           str))))))
+    (lambda (_heading-pos beg end)
+      (with-restriction beg end
+        (let ((str (string-trim (buffer-string))))
+          (goto-char (point-max))
+          (while (and (bolp) (not (bobp)))
+            (delete-char -1))
+          (if (string= "ox-slack" format)
+              (org-slack-export-to-clipboard-as-slack)
+            (kill-new
+             (if format
+                 (funcall
+                  (cadr (assoc format copy-as-format-format-alist))
+                  str
+                  (use-region-p))
+               str))))))))
 
 (defun org-drafts-gptel ()
   "Send draft to GPTel chat buffer.
 Changes heading to SCRAP before sending.
 Creates a new GPTel chat buffer with the draft content and sends it."
   (interactive)
+  (require 'gptel)
   (org-drafts-with-change-to "SCRAP"
-    (lambda (str)
-      (with-current-buffer (gptel "chat_buffer_name" nil str)
-        (pop-to-buffer (current-buffer))
-        (gptel-send)))))
+    (lambda (_heading-pos beg end)
+      (with-restriction beg end
+        (let ((str (string-trim (buffer-string))))
+          (with-current-buffer (gptel "chat_buffer_name" nil str)
+            (pop-to-buffer (current-buffer))
+            (gptel-send)))))))
 
 (defun org-drafts-kagi ()
   "Submit draft contents as a search query to Kagi.
 Changes heading to SCRAP before sending query."
   (interactive)
   (org-drafts-with-change-to "SCRAP"
-    (lambda (str) (browse-url (concat "https://kagi.com/search?q="
-                                 (url-hexify-string str))))))
+    (lambda (_heading-pos beg end)
+      (with-restriction beg end
+        (let ((str (string-trim (buffer-string))))
+          (with-restriction beg end
+            (browse-url (concat "https://kagi.com/search?q="
+                                (url-hexify-string str)))))))))
+
+(defun org-drafts-claude ()
+  "Submit draft contents as a search query to Perplexity.ai.
+Changes heading to SCRAP before sending query."
+  (interactive)
+  (org-drafts-with-change-to "SCRAP"
+    (lambda (_heading-pos beg end)
+      (with-restriction beg end
+        (let ((str (string-trim (buffer-string))))
+          (browse-url (concat "https://claude.ai/new?q="
+                              (url-hexify-string str))))))))
 
 (defun org-drafts-perplexity ()
   "Submit draft contents as a search query to Perplexity.ai.
 Changes heading to SCRAP before sending query."
   (interactive)
   (org-drafts-with-change-to "SCRAP"
-    (lambda (str) (browse-url (concat "https://www.perplexity.ai/search/?q="
-                                 (url-hexify-string str)
-                                 "&copilot=true")))))
+    (lambda (_heading-pos beg end)
+      (with-restriction beg end
+        (let ((str (string-trim (buffer-string))))
+          (browse-url (concat "https://www.perplexity.ai/search/?q="
+                              (url-hexify-string str)
+                              "&copilot=true")))))))
 
 (defun org-drafts-email ()
   "Create a new email with the draft content.
@@ -153,11 +201,13 @@ Changes heading to SCRAP before creating email.
 Uses Gnus mail user agent to compose a new email with the draft content."
   (interactive)
   (org-drafts-with-change-to "SCRAP"
-    (lambda (str)
-      (let ((mail-user-agent 'gnus-user-agent))
-        (compose-mail)
-        (message-goto-body)
-        (insert str)))))
+    (lambda (_heading-pos beg end)
+      (with-restriction beg end
+        (let ((str (string-trim (buffer-string))))
+          (let ((mail-user-agent 'gnus-user-agent))
+            (compose-mail)
+            (message-goto-body)
+            (insert str)))))))
 
 (pretty-hydra-define org-drafts
   (:color teal :quit-key "q")
@@ -165,20 +215,18 @@ Uses Gnus mail user agent to compose a new email with the draft content."
    (("n"   (org-drafts-change "NOTE") "NOTE")
     ("t"   (org-drafts-change "TODO") "TODO")
     ("d"   org-capture-finalize "DRAFT")
+    ("S"   (org-drafts-change "SCRAP") "SCRAP")
     ("C-c" org-capture-finalize "DRAFT"))
    "Utils"
    (("c"   org-drafts-copy-to-clipboard "Copy")
-    ("W"   (org-drafts-copy-to-clipboard "whatsapp") "WhatsApp")
-    ("G"   (org-drafts-copy-to-clipboard "github") "GitHub")
-    ("M"   (org-drafts-copy-to-clipboard "markdown") "Markdown")
-    ("T"   (org-drafts-copy-to-clipboard "telegram") "Telegram")
-    ("s"   (org-drafts-copy-to-clipboard "ox-slack") "Slack")
-    ("S"   (org-drafts-copy-to-clipboard "slack") "Slack (code)"))
+    ("M"   (org-drafts-copy-to-clipboard "markdown") "Md (code)")
+    ("s"   (org-drafts-copy-to-clipboard "ox-slack") "Slack"))
    "Other"
    (("k"   org-drafts-kagi "Kagi")
     ("g"   org-drafts-gptel "GPTel")
     ("p"   org-drafts-perplexity "Perplexity")
-    ("C-s" org-drafts-perplexity "Perplexity")
+    ("C"   org-drafts-claude "Claude")
+    ("C-s" org-drafts-claude "Claude")
     ("m"   org-drafts-email "Email"))
    "This hydra menu provides quick actions for handling Org drafts"))
 
