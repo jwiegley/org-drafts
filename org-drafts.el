@@ -46,7 +46,7 @@
 (require 'org-macs)
 (require 'org-capture)
 (require 'copy-as-format)
-(require 'ox-slack)
+;;(require 'ox-slack)
 (require 'pretty-hydra)
 
 (defgroup org-drafts nil
