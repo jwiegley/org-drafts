@@ -209,6 +209,65 @@ Uses Gnus mail user agent to compose a new email with the draft content."
             (message-goto-body)
             (insert str)))))))
 
+(defun org-drafts-rewrite ()
+  "Rewrite draft content using an LLM via gptel.
+Prompts for rewrite instructions, sends the draft body to gptel for
+rewriting, then saves the original content, prompt, and rewritten
+result in the draft entry.  The rewritten text is pushed to the
+kill ring and displayed in a temporary buffer."
+  (interactive)
+  (require 'gptel)
+  (let ((prompt (read-string "Rewrite prompt: ")))
+    (when (string-empty-p prompt)
+      (user-error "Rewrite prompt cannot be empty"))
+    (let ((capture-buf (current-buffer))
+          (in-capture org-capture-mode))
+      (org-drafts-with
+       #'ignore
+       #'ignore
+       (lambda (heading-pos beg end)
+         (let ((original (string-trim
+                          (buffer-substring-no-properties beg end)))
+               (level (save-excursion
+                        (goto-char heading-pos)
+                        (org-current-level))))
+           (when (string-empty-p original)
+             (user-error "Draft body is empty"))
+           (message "Rewriting draft with gptel...")
+           (gptel-request
+            (format "Rewrite the following text according to these \
+instructions.  Output ONLY the rewritten text, with no preamble or \
+commentary.\n\nInstructions: %s\n\nText to rewrite:\n%s"
+                    prompt original)
+            :callback
+            (lambda (response info)
+              (if (not (stringp response))
+                  (message "gptel rewrite failed: %s"
+                           (plist-get info :status))
+                (let ((result (string-trim response))
+                      (sub (make-string (1+ level) ?*)))
+                  (kill-new result)
+                  (with-current-buffer
+                      (get-buffer-create "*Org Draft Rewrite*")
+                    (erase-buffer)
+                    (insert result)
+                    (goto-char (point-min))
+                    (display-buffer (current-buffer)))
+                  (when (buffer-live-p capture-buf)
+                    (with-current-buffer capture-buf
+                      (save-excursion
+                        (delete-region beg end)
+                        (goto-char beg)
+                        (insert original "\n"
+                                sub " Rewrite Prompt\n"
+                                prompt "\n"
+                                sub " Rewritten\n"
+                                result "\n"))
+                      (when in-capture
+                        (org-capture-finalize))))
+                  (message "Draft rewritten and saved. \
+Result copied to kill ring.")))))))))))
+
 (pretty-hydra-define org-drafts
   (:color teal :quit-key "q")
   ("Org"
@@ -227,7 +286,8 @@ Uses Gnus mail user agent to compose a new email with the draft content."
     ("p"   org-drafts-perplexity "Perplexity")
     ("C"   org-drafts-claude "Claude")
     ("C-s" org-drafts-claude "Claude")
-    ("m"   org-drafts-email "Email"))
+    ("m"   org-drafts-email "Email")
+    ("r"   org-drafts-rewrite "Rewrite"))
    "This hydra menu provides quick actions for handling Org drafts"))
 
 (defun org-drafts-action (&optional arg)
