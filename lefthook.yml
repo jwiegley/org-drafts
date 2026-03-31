@@ -1,0 +1,27 @@
+pre-commit:
+  parallel: true
+  commands:
+    compile:
+      glob: "*.el"
+      run: nix develop --command make compile
+    lint:
+      glob: "*.el"
+      run: nix develop --command make lint
+    checkdoc:
+      glob: "*.el"
+      run: nix develop --command make checkdoc
+    format-check:
+      glob: "*.el"
+      run: nix develop --command make format-check
+    test:
+      glob: "*.el"
+      run: nix develop --command make test
+    coverage-check:
+      glob: "*.el"
+      run: "test -f .coverage-threshold && nix develop --command make coverage-check || true"
+    benchmark-check:
+      glob: "*.el"
+      run: "test -f .benchmark-baseline && nix develop --command make benchmark-check || true"
+    nix-check:
+      glob: "*.{el,nix}"
+      run: nix flake check --no-warn-dirty 2>&1

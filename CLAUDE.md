@@ -8,17 +8,30 @@ org-drafts is a single-file Emacs Lisp package that intercepts org-capture final
 
 ## Build and Compilation
 
-No build system (no Eask, Makefile, or Cask). Single-file package.
+Uses a Makefile, Nix flake, and lefthook for pre-commit checks.
 
 ```bash
-# Byte-compile
-emacs -batch -L . -f batch-byte-compile org-drafts.el
+# Build targets
+make compile        # Byte-compile with warnings-as-errors
+make lint           # Run package-lint
+make checkdoc       # Validate docstrings
+make format-check   # Check Emacs indentation standards
+make format         # Auto-format to Emacs indentation standards
+make test           # Run ERT test suite
+make coverage       # Generate lcov coverage report
+make coverage-check # Verify coverage meets threshold
+make benchmark      # Run performance benchmarks
+make benchmark-save # Save benchmark baseline
+make benchmark-check # Check for >5% regression
+make all            # compile + lint + checkdoc + format-check + test
 
-# Check for warnings
-emacs -batch -L . -f batch-byte-compile org-drafts.el 2>&1 | grep -i warning
+# Nix
+nix flake check     # Run all 5 checks (compile, lint, checkdoc, format-check, test)
+nix build           # Build the package
+nix develop         # Enter dev shell with all dependencies
 ```
 
-There are no tests. The `.elc` file is tracked in git.
+Tests are in `org-drafts-test.el` (39 ERT tests). The `.elc` file is tracked in git.
 
 ## Dependencies
 

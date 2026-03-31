@@ -1,12 +1,13 @@
-;;; org-drafts --- Manage drafts using Org-capture -*- lexical-binding: t -*-
+;;; org-drafts.el --- Manage drafts using Org-capture -*- lexical-binding: t -*-
 
 ;; Copyright (C) 2011 John Wiegley
 
 ;; Author: John Wiegley <johnw@gnu.org>
 ;; Created: 14 Jul 2025
 ;; Version: 1.0
-;; Keywords: org capture task todo context
-;; X-URL: https://github.com/jwiegley/dot-emacs
+;; Package-Requires: ((emacs "29.1") (org "9.0") (copy-as-format "0.0.8") (pretty-hydra "0.2.2"))
+;; Keywords: outlines convenience
+;; URL: https://github.com/jwiegley/dot-emacs
 
 ;; This program is free software; you can redistribute it and/or
 ;; modify it under the terms of the GNU General Public License as
@@ -48,6 +49,12 @@
 (require 'copy-as-format)
 ;;(require 'ox-slack)
 (require 'pretty-hydra)
+
+(declare-function gptel "gptel")
+(declare-function gptel-request "gptel")
+(declare-function gptel-send "gptel")
+(declare-function org-slack-export-to-clipboard-as-slack "ox-slack")
+(declare-function message-goto-body "message")
 
 (defgroup org-drafts nil
   "Capture drafts that begin in the Org-capture buffer."
@@ -113,10 +120,10 @@ This function is used to change a draft's heading keyword and process
 its content."
   (declare (indent 1))
   (org-drafts-with
-   (lambda () (when (looking-at "^\\*+ \\(DRAFT\\|SCRAP\\) ")
-           (replace-match keyword t t nil 1)))
-   (lambda () (org-capture-finalize current-prefix-arg))
-   body-func))
+      (lambda () (when (looking-at "^\\*+ \\(DRAFT\\|SCRAP\\) ")
+                   (replace-match keyword t t nil 1)))
+      (lambda () (org-capture-finalize current-prefix-arg))
+    body-func))
 
 (defsubst org-drafts-change (keyword)
   "Call `org-drafts-with-change-to' but with no body function.
@@ -223,50 +230,54 @@ kill ring and displayed in a temporary buffer."
     (let ((capture-buf (current-buffer))
           (in-capture org-capture-mode))
       (org-drafts-with
-       #'ignore
-       #'ignore
-       (lambda (heading-pos beg end)
-         (let ((original (string-trim
-                          (buffer-substring-no-properties beg end)))
-               (level (save-excursion
-                        (goto-char heading-pos)
-                        (org-current-level))))
-           (when (string-empty-p original)
-             (user-error "Draft body is empty"))
-           (message "Rewriting draft with gptel...")
-           (gptel-request
-            (format "Rewrite the following text according to these \
+          #'ignore
+          #'ignore
+        (lambda (heading-pos beg end)
+          (let ((original (string-trim
+                           (buffer-substring-no-properties beg end)))
+                (level (save-excursion
+                         (goto-char heading-pos)
+                         (org-current-level))))
+            (when (string-empty-p original)
+              (user-error "Draft body is empty"))
+            (message "Rewriting draft with gptel...")
+            (gptel-request
+             (format "Rewrite the following text according to these \
 instructions.  Output ONLY the rewritten text, with no preamble or \
 commentary.\n\nInstructions: %s\n\nText to rewrite:\n%s"
-                    prompt original)
-            :callback
-            (lambda (response info)
-              (if (not (stringp response))
-                  (message "gptel rewrite failed: %s"
-                           (plist-get info :status))
-                (let ((result (string-trim response))
-                      (sub (make-string (1+ level) ?*)))
-                  (kill-new result)
-                  (with-current-buffer
-                      (get-buffer-create "*Org Draft Rewrite*")
-                    (erase-buffer)
-                    (insert result)
-                    (goto-char (point-min))
-                    (display-buffer (current-buffer)))
-                  (when (buffer-live-p capture-buf)
-                    (with-current-buffer capture-buf
-                      (save-excursion
-                        (delete-region beg end)
-                        (goto-char beg)
-                        (insert original "\n"
-                                sub " Rewrite Prompt\n"
-                                prompt "\n"
-                                sub " Rewritten\n"
-                                result "\n"))
-                      (when in-capture
-                        (org-capture-finalize))))
-                  (message "Draft rewritten and saved. \
+                     prompt original)
+             :callback
+             (lambda (response info)
+               (if (not (stringp response))
+                   (message "gptel rewrite failed: %s"
+                            (plist-get info :status))
+                 (let ((result (string-trim response))
+                       (sub (make-string (1+ level) ?*)))
+                   (kill-new result)
+                   (with-current-buffer
+                       (get-buffer-create "*Org Draft Rewrite*")
+                     (erase-buffer)
+                     (insert result)
+                     (goto-char (point-min))
+                     (display-buffer (current-buffer)))
+                   (when (buffer-live-p capture-buf)
+                     (with-current-buffer capture-buf
+                       (save-excursion
+                         (delete-region beg end)
+                         (goto-char beg)
+                         (insert original "\n"
+                                 sub " Rewrite Prompt\n"
+                                 prompt "\n"
+                                 sub " Rewritten\n"
+                                 result "\n"))
+                       (when in-capture
+                         (org-capture-finalize))))
+                   (message "Draft rewritten and saved. \
 Result copied to kill ring.")))))))))))
+
+;; pretty-hydra generates wide hint tables as docstrings.
+(eval-when-compile
+  (setq byte-compile-docstring-max-column 200))
 
 (pretty-hydra-define org-drafts
   (:color teal :quit-key "q")
@@ -288,7 +299,7 @@ Result copied to kill ring.")))))))))))
     ("C-s" org-drafts-claude "Claude")
     ("m"   org-drafts-email "Email")
     ("r"   org-drafts-rewrite "Rewrite"))
-   "This hydra menu provides quick actions for handling Org drafts"))
+   "Quick actions for handling Org drafts."))
 
 (defun org-drafts-action (&optional arg)
   "Handle the finalization of a draft.

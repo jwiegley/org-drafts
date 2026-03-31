@@ -1,1 +1,4 @@
 /.aider*
+/coverage/
+/.benchmark-baseline
+/result
