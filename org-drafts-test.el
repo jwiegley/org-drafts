@@ -232,13 +232,17 @@ at-capture-end-func when in capture mode."
     (goto-char (point-min))
     (should (looking-at-p "^\\* TODO "))))
 
-(ert-deftest org-drafts-test-with-change-to-calls-finalize ()
-  "org-capture-finalize should be called in capture mode."
-  (org-drafts-test--with-capture-buffer
-      "* DRAFT Test\nBody\n"
-    (org-drafts-with-change-to "SCRAP"
-      (lambda (_h _b _e) nil))
-    (should org-drafts-test--finalize-called)))
+(ert-deftest org-drafts-test-with-change-to-runs-state-change-hook ()
+  "`org-after-todo-state-change-hook' should run in capture mode."
+  (let ((hook-ran nil))
+    (org-drafts-test--with-capture-buffer
+        "* DRAFT Test\nBody\n"
+      (let ((org-after-todo-state-change-hook
+             (list (lambda () (setq hook-ran t)))))
+        (org-drafts-with-change-to "SCRAP"
+          (lambda (_h _b _e) nil)))
+      (should hook-ran)
+      (should-not org-drafts-test--finalize-called))))
 
 (ert-deftest org-drafts-test-with-change-to-body-receives-markers ()
   "body-func should receive valid markers for heading, beg, and end."

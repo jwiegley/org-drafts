@@ -62,8 +62,14 @@
 
 (defcustom org-drafts-task-body-function
   #'org-drafts-default-body-function
-  "Function to use for processing TODO/NOTE bodies."
+  "Function to use for processing TODO/NOTE bodies.
+Bound to keys n and t in the org-drafts hydra."
   :type 'function
+  :group 'org-drafts)
+
+(defcustom org-drafts-after-state-change-function nil
+  "Hook which is run after the state of a TODO item was changed."
+  :type 'hook
   :group 'org-drafts)
 
 (defvar org-drafts--text
@@ -121,8 +127,10 @@ its content."
   (declare (indent 1))
   (org-drafts-with
       (lambda () (when (looking-at "^\\*+ \\(DRAFT\\|SCRAP\\) ")
-                   (replace-match keyword t t nil 1)))
-      (lambda () (org-capture-finalize current-prefix-arg))
+                   (replace-match keyword t t nil 1)
+                   (run-hooks 'org-drafts-after-state-change-function)))
+      (lambda ()
+        (run-hooks 'org-after-todo-state-change-hook))
     body-func))
 
 (defsubst org-drafts-change (keyword)
