@@ -515,6 +515,34 @@ at-capture-end-func when in capture mode."
             (should (equal "Dear colleague" (buffer-string)))))
       (kill-buffer mail-buf))))
 
+;;; ---- Tests for org-drafts-change-alt ----
+
+(ert-deftest org-drafts-test-change-alt-uses-alt-body-function ()
+  "org-drafts-change-alt should call `org-drafts-alt-task-body-function'."
+  (let ((alt-called nil))
+    (org-drafts-test--with-capture-buffer
+        "* DRAFT [2025-07-14 Mon]\nBody\n"
+      (let ((org-drafts-alt-task-body-function
+             (lambda (_h _b _e) (setq alt-called t))))
+        (org-drafts-change-alt "TODO")))
+    (should alt-called)))
+
+(ert-deftest org-drafts-test-change-alt-errors-when-unset ()
+  "org-drafts-change-alt should error if no alt body function is set."
+  (org-drafts-test--with-capture-buffer
+      "* DRAFT Test\nBody\n"
+    (let ((org-drafts-alt-task-body-function nil))
+      (should-error (org-drafts-change-alt "TODO") :type 'user-error))))
+
+(ert-deftest org-drafts-test-change-alt-changes-keyword ()
+  "org-drafts-change-alt should change DRAFT to the new keyword."
+  (org-drafts-test--with-capture-buffer
+      "* DRAFT Test\nBody\n"
+    (let ((org-drafts-alt-task-body-function (lambda (_h _b _e) nil)))
+      (org-drafts-change-alt "NOTE"))
+    (goto-char (point-min))
+    (should (looking-at-p "^\\* NOTE "))))
+
 ;;; ---- Edge case tests ----
 
 (ert-deftest org-drafts-test-empty-body ()

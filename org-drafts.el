@@ -67,6 +67,18 @@ Bound to keys n and t in the org-drafts hydra."
   :type 'function
   :group 'org-drafts)
 
+(defcustom org-drafts-alt-task-body-function nil
+  "Alternative body function for TODO/NOTE bodies.
+When non-nil, the org-drafts hydra exposes capital N and T keys that
+call `org-drafts-change-alt' using this function instead of
+`org-drafts-task-body-function'.  This lets both behaviors stay
+available simultaneously: for example, the default behavior of moving
+the first body line into the heading title (bound to lowercase n and
+t) and an alternate behavior such as LLM-based title synthesis (bound
+to capital N and T)."
+  :type '(choice (const :tag "Disabled" nil) function)
+  :group 'org-drafts)
+
 (defcustom org-drafts-after-state-change-function nil
   "Hook which is run after the state of a TODO item was changed."
   :type 'hook
@@ -137,6 +149,14 @@ its content."
   "Call `org-drafts-with-change-to' but with no body function.
 This results in only the KEYWORD being changed."
   (org-drafts-with-change-to keyword org-drafts-task-body-function))
+
+(defun org-drafts-change-alt (keyword)
+  "Change the draft to KEYWORD using `org-drafts-alt-task-body-function'.
+Signals a `user-error' if no alternate body function has been
+configured."
+  (unless org-drafts-alt-task-body-function
+    (user-error "`org-drafts-alt-task-body-function' is not set"))
+  (org-drafts-with-change-to keyword org-drafts-alt-task-body-function))
 
 (defun org-drafts-copy-to-clipboard (&optional format)
   "Copy draft content to clipboard, changing heading to SCRAP.
@@ -292,6 +312,8 @@ Result copied to kill ring.")))))))))))
   ("Org"
    (("n"   (org-drafts-change "NOTE") "NOTE")
     ("t"   (org-drafts-change "TODO") "TODO")
+    ("N"   (org-drafts-change-alt "NOTE") "NOTE (alt)")
+    ("T"   (org-drafts-change-alt "TODO") "TODO (alt)")
     ("d"   org-capture-finalize "DRAFT")
     ("S"   (org-drafts-change "SCRAP") "SCRAP")
     ("C-c" org-capture-finalize "DRAFT"))
