@@ -543,6 +543,315 @@ at-capture-end-func when in capture mode."
     (goto-char (point-min))
     (should (looking-at-p "^\\* NOTE "))))
 
+;;; ---- Tests for org-drafts--collect-draft-markers ----
+
+(ert-deftest org-drafts-test-collect-markers-empty ()
+  "An empty buffer should produce no markers."
+  (org-drafts-test--with-org-buffer ""
+    (let ((markers (org-drafts--collect-draft-markers
+                    (point-min) (point-max))))
+      (should (null markers)))))
+
+(ert-deftest org-drafts-test-collect-markers-only-drafts ()
+  "Should collect a marker at the start of each DRAFT heading."
+  (org-drafts-test--with-org-buffer
+      "* DRAFT One\nBody one\n* DRAFT Two\nBody two\n* DRAFT Three\nBody three\n"
+    (let ((markers (org-drafts--collect-draft-markers
+                    (point-min) (point-max))))
+      (unwind-protect
+          (progn
+            (should (= 3 (length markers)))
+            (dolist (m markers)
+              (should (markerp m))
+              (goto-char m)
+              (should (looking-at-p "^\\* DRAFT "))))
+        (dolist (m markers) (set-marker m nil))))))
+
+(ert-deftest org-drafts-test-collect-markers-skips-non-drafts ()
+  "Non-DRAFT entries should not appear in the marker list."
+  (org-drafts-test--with-org-buffer
+      "* DRAFT First\n* TODO Second\n* DRAFT Third\n* NOTE Fourth\n* SCRAP Fifth\n"
+    (let ((markers (org-drafts--collect-draft-markers
+                    (point-min) (point-max))))
+      (unwind-protect
+          (progn
+            (should (= 2 (length markers)))
+            (goto-char (nth 0 markers))
+            (should (looking-at-p "^\\* DRAFT First"))
+            (goto-char (nth 1 markers))
+            (should (looking-at-p "^\\* DRAFT Third")))
+        (dolist (m markers) (set-marker m nil))))))
+
+(ert-deftest org-drafts-test-collect-markers-respects-bounds ()
+  "Only DRAFT entries between BEG and END should be collected."
+  (org-drafts-test--with-org-buffer
+      "* DRAFT First\nBody\n* DRAFT Second\nBody\n* DRAFT Third\nBody\n"
+    (goto-char (point-min))
+    (forward-line 2) ;; past first heading and its body
+    (let* ((beg (point))
+           (end (save-excursion (forward-line 2) (point)))
+           (markers (org-drafts--collect-draft-markers beg end)))
+      (unwind-protect
+          (progn
+            (should (= 1 (length markers)))
+            (goto-char (car markers))
+            (should (looking-at-p "^\\* DRAFT Second")))
+        (dolist (m markers) (set-marker m nil))))))
+
+(ert-deftest org-drafts-test-collect-markers-nested-levels ()
+  "Markers should be collected for DRAFTs at any heading level."
+  (org-drafts-test--with-org-buffer
+      "* DRAFT Top\n** DRAFT Nested\n*** DRAFT Deeply\n"
+    (let ((markers (org-drafts--collect-draft-markers
+                    (point-min) (point-max))))
+      (unwind-protect
+          (should (= 3 (length markers)))
+        (dolist (m markers) (set-marker m nil))))))
+
+;;; ---- Tests for org-drafts-for-each-draft-in-region ----
+
+(ert-deftest org-drafts-test-for-each-iterates ()
+  "ACTION-FN should be called once per DRAFT entry."
+  (org-drafts-test--with-org-buffer
+      "* DRAFT One\nBody\n* DRAFT Two\nBody\n* DRAFT Three\nBody\n"
+    (let ((count 0))
+      (org-drafts-for-each-draft-in-region
+       (point-min) (point-max)
+       (lambda () (cl-incf count)))
+      (should (= 3 count)))))
+
+(ert-deftest org-drafts-test-for-each-passes-point-at-heading ()
+  "ACTION-FN should be invoked with point at the heading start."
+  (org-drafts-test--with-org-buffer
+      "* DRAFT Alpha\n* DRAFT Beta\n"
+    (let (titles)
+      (org-drafts-for-each-draft-in-region
+       (point-min) (point-max)
+       (lambda ()
+         (push (buffer-substring (point) (line-end-position)) titles)))
+      (setq titles (nreverse titles))
+      (should (equal titles '("* DRAFT Alpha" "* DRAFT Beta"))))))
+
+(ert-deftest org-drafts-test-for-each-skips-non-drafts ()
+  "Non-DRAFT entries should not be visited."
+  (org-drafts-test--with-org-buffer
+      "* TODO First\n* DRAFT Second\n* NOTE Third\n"
+    (let (visited)
+      (org-drafts-for-each-draft-in-region
+       (point-min) (point-max)
+       (lambda ()
+         (push (buffer-substring (point) (line-end-position)) visited)))
+      (should (equal visited '("* DRAFT Second"))))))
+
+(ert-deftest org-drafts-test-for-each-empty-region ()
+  "Iteration over a region with no DRAFTs should be a no-op."
+  (org-drafts-test--with-org-buffer
+      "* TODO Just a todo\n* NOTE Just a note\n"
+    (let ((called nil))
+      (org-drafts-for-each-draft-in-region
+       (point-min) (point-max)
+       (lambda () (setq called t)))
+      (should-not called))))
+
+(ert-deftest org-drafts-test-for-each-converts-all ()
+  "Calling org-drafts-change inside the action should rewrite each heading."
+  (org-drafts-test--with-org-buffer
+      "* DRAFT One\nBody\n* DRAFT Two\nMore\n* DRAFT Three\nLast\n"
+    (let ((org-capture-mode nil)
+          (org-drafts-task-body-function (lambda (_h _b _e) nil)))
+      (org-drafts-for-each-draft-in-region
+       (point-min) (point-max)
+       (lambda () (org-drafts-change "TODO"))))
+    (goto-char (point-min))
+    (let ((todo-count 0))
+      (while (re-search-forward "^\\* TODO " nil t)
+        (cl-incf todo-count))
+      (should (= 3 todo-count)))
+    (goto-char (point-min))
+    (should-not (re-search-forward "^\\* DRAFT " nil t))))
+
+(ert-deftest org-drafts-test-for-each-releases-markers ()
+  "Markers returned by collection should be released after iteration."
+  (org-drafts-test--with-org-buffer
+      "* DRAFT One\n* DRAFT Two\n"
+    (let (captured)
+      (cl-letf* ((orig-collect
+                  (symbol-function 'org-drafts--collect-draft-markers))
+                 ((symbol-function 'org-drafts--collect-draft-markers)
+                  (lambda (b e)
+                    (let ((ms (funcall orig-collect b e)))
+                      (setq captured ms)
+                      ms))))
+        (org-drafts-for-each-draft-in-region
+         (point-min) (point-max)
+         #'ignore))
+      (should captured)
+      (dolist (m captured)
+        (should-not (marker-position m))
+        (should-not (marker-buffer m))))))
+
+(ert-deftest org-drafts-test-for-each-releases-markers-on-error ()
+  "Markers should still be released when ACTION-FN signals an error."
+  (org-drafts-test--with-org-buffer
+      "* DRAFT One\n* DRAFT Two\n"
+    (let (captured)
+      (cl-letf* ((orig-collect
+                  (symbol-function 'org-drafts--collect-draft-markers))
+                 ((symbol-function 'org-drafts--collect-draft-markers)
+                  (lambda (b e)
+                    (let ((ms (funcall orig-collect b e)))
+                      (setq captured ms)
+                      ms))))
+        (should-error
+         (org-drafts-for-each-draft-in-region
+          (point-min) (point-max)
+          (lambda () (error "boom")))))
+      (should captured)
+      (dolist (m captured)
+        (should-not (marker-position m))
+        (should-not (marker-buffer m))))))
+
+;;; ---- Tests for org-drafts--dispatch ----
+
+(ert-deftest org-drafts-test-dispatch-without-region ()
+  "Without `org-drafts--region-bounds', BODY runs once at point."
+  (let ((count 0))
+    (let ((org-drafts--region-bounds nil))
+      (org-drafts--dispatch (cl-incf count)))
+    (should (= 1 count))))
+
+(ert-deftest org-drafts-test-dispatch-with-region ()
+  "With `org-drafts--region-bounds' set, BODY runs once per DRAFT in region."
+  (org-drafts-test--with-org-buffer
+      "* DRAFT A\n* DRAFT B\n* TODO C\n* DRAFT D\n"
+    (let ((count 0)
+          (org-drafts--region-bounds
+           (cons (copy-marker (point-min))
+                 (copy-marker (point-max)))))
+      (unwind-protect
+          (progn
+            (org-drafts--dispatch (cl-incf count))
+            (should (= 3 count)))
+        (set-marker (car org-drafts--region-bounds) nil)
+        (set-marker (cdr org-drafts--region-bounds) nil)))))
+
+;;; ---- Tests for org-drafts--release-region-bounds ----
+
+(ert-deftest org-drafts-test-release-clears-and-releases ()
+  "Releasing should null the variable and the markers."
+  (let* ((m1 (copy-marker (point-min)))
+         (m2 (copy-marker (point-max)))
+         (org-drafts--region-bounds (cons m1 m2)))
+    (org-drafts--release-region-bounds)
+    (should-not org-drafts--region-bounds)
+    (should-not (marker-position m1))
+    (should-not (marker-position m2))))
+
+(ert-deftest org-drafts-test-release-noop-when-nil ()
+  "Releasing when nothing is bound is a no-op."
+  (let ((org-drafts--region-bounds nil))
+    (org-drafts--release-region-bounds)
+    (should-not org-drafts--region-bounds)))
+
+;;; ---- Tests for org-drafts-act-on-region ----
+
+(ert-deftest org-drafts-test-act-on-region-binds-bounds ()
+  "Hydra body should see `org-drafts--region-bounds' set to the region.
+Cleanup is the responsibility of the hydra's :after-exit hook in real
+use; this test stubs the hydra body and inspects the variable mid-flight."
+  (org-drafts-test--with-org-buffer
+      "* DRAFT One\n* DRAFT Two\n"
+    (let ((seen-bounds nil)
+          (org-drafts--region-bounds nil))
+      (unwind-protect
+          (progn
+            (cl-letf (((symbol-function 'org-drafts/body)
+                       (lambda ()
+                         (setq seen-bounds
+                               (and org-drafts--region-bounds
+                                    (cons (marker-position
+                                           (car org-drafts--region-bounds))
+                                          (marker-position
+                                           (cdr org-drafts--region-bounds))))))))
+              (let ((transient-mark-mode t))
+                (set-mark (point-min))
+                (goto-char (point-max))
+                (org-drafts-act-on-region (point-min) (point-max))))
+            (should seen-bounds)
+            (should (= (car seen-bounds) (point-min)))
+            (should (= (cdr seen-bounds) (point-max))))
+        (org-drafts--release-region-bounds)))))
+
+(ert-deftest org-drafts-test-act-on-region-deactivates-mark ()
+  "The mark should be deactivated before the hydra opens."
+  (org-drafts-test--with-org-buffer
+      "* DRAFT One\n* DRAFT Two\n"
+    (let ((mark-active-during nil)
+          (org-drafts--region-bounds nil))
+      (unwind-protect
+          (cl-letf (((symbol-function 'org-drafts/body)
+                     (lambda ()
+                       (setq mark-active-during (region-active-p)))))
+            (let ((transient-mark-mode t))
+              (set-mark (point-min))
+              (goto-char (point-max))
+              (org-drafts-act-on-region (point-min) (point-max)))
+            (should-not mark-active-during))
+        (org-drafts--release-region-bounds)))))
+
+(ert-deftest org-drafts-test-act-on-region-releases-stale-bounds ()
+  "A second call should release any pre-existing bounds."
+  (org-drafts-test--with-org-buffer
+      "* DRAFT One\n* DRAFT Two\n"
+    (let* ((stale-m1 (copy-marker (point-min)))
+           (stale-m2 (copy-marker (point-max)))
+           (org-drafts--region-bounds (cons stale-m1 stale-m2)))
+      (unwind-protect
+          (cl-letf (((symbol-function 'org-drafts/body) #'ignore))
+            (let ((transient-mark-mode t))
+              (set-mark (point-min))
+              (goto-char (point-max))
+              (org-drafts-act-on-region (point-min) (point-max)))
+            (should-not (marker-position stale-m1))
+            (should-not (marker-position stale-m2))
+            (should org-drafts--region-bounds))
+        (org-drafts--release-region-bounds)))))
+
+(ert-deftest org-drafts-test-act-on-region-no-region-errors ()
+  "Calling without an active region should signal an error.
+The (interactive \"r\") form itself raises \"The mark is not set\" when
+the mark is unset, so this test only requires that *some* error is
+signaled rather than asserting a specific type."
+  (org-drafts-test--with-org-buffer "* DRAFT Test\n"
+    (deactivate-mark)
+    (should-error (call-interactively #'org-drafts-act-on-region))))
+
+(ert-deftest org-drafts-test-act-on-region-converts-all ()
+  "End-to-end: all DRAFTs in the region should change to TODO."
+  (org-drafts-test--with-org-buffer
+      "* DRAFT One\nBody1\n* DRAFT Two\nBody2\n* DRAFT Three\nBody3\n"
+    (let ((org-capture-mode nil)
+          (org-drafts-task-body-function (lambda (_h _b _e) nil))
+          (org-drafts--region-bounds nil))
+      (unwind-protect
+          (progn
+            (cl-letf (((symbol-function 'org-drafts/body)
+                       (lambda ()
+                         (org-drafts--dispatch
+                           (org-drafts-change "TODO")))))
+              (let ((transient-mark-mode t))
+                (set-mark (point-min))
+                (goto-char (point-max))
+                (org-drafts-act-on-region (point-min) (point-max))))
+            (goto-char (point-min))
+            (should-not (re-search-forward "^\\* DRAFT " nil t))
+            (goto-char (point-min))
+            (let ((todo-count 0))
+              (while (re-search-forward "^\\* TODO " nil t)
+                (cl-incf todo-count))
+              (should (= 3 todo-count))))
+        (org-drafts--release-region-bounds)))))
+
 ;;; ---- Edge case tests ----
 
 (ert-deftest org-drafts-test-empty-body ()

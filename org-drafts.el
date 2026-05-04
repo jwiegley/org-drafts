@@ -158,6 +158,75 @@ configured."
     (user-error "`org-drafts-alt-task-body-function' is not set"))
   (org-drafts-with-change-to keyword org-drafts-alt-task-body-function))
 
+(defvar org-drafts--region-bounds nil
+  "If non-nil, a (BEG . END) cons of buffer positions or markers.
+When set, the org-drafts hydra commands operate on every DRAFT entry
+between BEG and END instead of just the entry at point.  Set by
+`org-drafts-act-on-region' before invoking the hydra and cleared by
+`org-drafts--release-region-bounds' from the hydra's :after-exit hook.")
+
+(defun org-drafts--release-region-bounds ()
+  "Release any markers in `org-drafts--region-bounds' and clear it.
+Intended to be called from the hydra's :after-exit hook so that
+`org-drafts-act-on-region' can leak no markers regardless of how the
+hydra exits."
+  (when org-drafts--region-bounds
+    (let ((b (car org-drafts--region-bounds))
+          (e (cdr org-drafts--region-bounds)))
+      (setq org-drafts--region-bounds nil)
+      (when (markerp b) (set-marker b nil))
+      (when (markerp e) (set-marker e nil)))))
+
+(defun org-drafts--collect-draft-markers (beg end)
+  "Return a list of markers at the start of each DRAFT heading.
+The markers cover the buffer range from BEG to END.  Markers are
+returned in the order in which the DRAFT headings appear.  Heading
+detection is case-sensitive so that lowercase \"draft\" inside text is
+not matched."
+  (save-excursion
+    (let ((case-fold-search nil)
+          acc)
+      (goto-char beg)
+      (while (re-search-forward "^\\*+ DRAFT " end t)
+        (when (save-match-data
+                (save-excursion
+                  (beginning-of-line)
+                  (org-at-heading-p)))
+          (beginning-of-line)
+          (push (copy-marker (point)) acc)
+          (forward-line 1)))
+      (nreverse acc))))
+
+(defun org-drafts-for-each-draft-in-region (beg end action-fn)
+  "Run ACTION-FN at each DRAFT entry heading between BEG and END.
+ACTION-FN is a zero-argument function invoked with point at the start
+of the heading line of each DRAFT entry.  Markers for every DRAFT
+heading are collected before iteration begins, so modifications made by
+ACTION-FN do not affect which entries are visited.  The markers are
+released after iteration completes, even if ACTION-FN signals an error."
+  (let ((markers (org-drafts--collect-draft-markers beg end)))
+    (unwind-protect
+        (dolist (m markers)
+          (when (marker-position m)
+            (save-excursion
+              (goto-char m)
+              (funcall action-fn))))
+      (dolist (m markers)
+        (set-marker m nil)))))
+
+(defmacro org-drafts--dispatch (&rest body)
+  "Evaluate BODY at point, or once at each DRAFT in a stored region.
+When `org-drafts--region-bounds' is non-nil, BODY is evaluated at each
+DRAFT entry heading between its car and cdr.  Otherwise BODY is
+evaluated once at point."
+  (declare (indent 0) (debug (body)))
+  `(if org-drafts--region-bounds
+       (org-drafts-for-each-draft-in-region
+        (car org-drafts--region-bounds)
+        (cdr org-drafts--region-bounds)
+        (lambda () ,@body))
+     (progn ,@body)))
+
 (defun org-drafts-copy-to-clipboard (&optional format)
   "Copy draft content to clipboard, changing heading to SCRAP.
 FORMAT is an optional format to use for the copy operation.
@@ -308,29 +377,36 @@ Result copied to kill ring.")))))))))))
   (setq byte-compile-docstring-max-column 200))
 
 (pretty-hydra-define org-drafts
-  (:color teal :quit-key "q")
+  (:color teal :quit-key "q"
+          :after-exit (org-drafts--release-region-bounds))
   ("Org"
-   (("n"   (org-drafts-change "NOTE") "NOTE")
-    ("t"   (org-drafts-change "TODO") "TODO")
-    ("p"   (org-drafts-change "PROMPT") "PROMPT")
-    ("q"   (org-drafts-change "QUOTE") "QUOTE")
-    ("N"   (org-drafts-change-alt "NOTE") "NOTE (alt)")
-    ("T"   (org-drafts-change-alt "TODO") "TODO (alt)")
-    ("P"   (org-drafts-change-alt "PROMPT") "PROMPT (alt)")
-    ("Q"   (org-drafts-change-alt "QUOTE") "QUOTE (alt)")
+   (("n"   (org-drafts--dispatch (org-drafts-change "NOTE")) "NOTE")
+    ("t"   (org-drafts--dispatch (org-drafts-change "TODO")) "TODO")
+    ("p"   (org-drafts--dispatch (org-drafts-change "PROMPT")) "PROMPT")
+    ("q"   (org-drafts--dispatch (org-drafts-change "QUOTE")) "QUOTE")
+    ("N"   (org-drafts--dispatch (org-drafts-change-alt "NOTE"))
+     "NOTE (alt)")
+    ("T"   (org-drafts--dispatch (org-drafts-change-alt "TODO"))
+     "TODO (alt)")
+    ("P"   (org-drafts--dispatch (org-drafts-change-alt "PROMPT"))
+     "PROMPT (alt)")
+    ("Q"   (org-drafts--dispatch (org-drafts-change-alt "QUOTE"))
+     "QUOTE (alt)")
     ("d"   org-capture-finalize "DRAFT")
-    ("S"   (org-drafts-change "SCRAP") "SCRAP")
+    ("S"   (org-drafts--dispatch (org-drafts-change "SCRAP")) "SCRAP")
     ("C-c" org-capture-finalize "DRAFT"))
    "Utils"
-   (("c"   org-drafts-copy-to-clipboard "Copy")
-    ("M"   (org-drafts-copy-to-clipboard "markdown") "Md (code)")
-    ("s"   (org-drafts-copy-to-clipboard "ox-slack") "Slack"))
+   (("c"   (org-drafts--dispatch (org-drafts-copy-to-clipboard)) "Copy")
+    ("M"   (org-drafts--dispatch (org-drafts-copy-to-clipboard "markdown"))
+     "Md (code)")
+    ("s"   (org-drafts--dispatch (org-drafts-copy-to-clipboard "ox-slack"))
+     "Slack"))
    "Other"
-   (("g"   org-drafts-gptel "GPTel")
-    ("C"   org-drafts-claude "Claude")
-    ("C-s" org-drafts-claude "Claude")
-    ("m"   org-drafts-email "Email")
-    ("r"   org-drafts-rewrite "Rewrite"))
+   (("g"   (org-drafts--dispatch (org-drafts-gptel)) "GPTel")
+    ("C"   (org-drafts--dispatch (org-drafts-claude)) "Claude")
+    ("C-s" (org-drafts--dispatch (org-drafts-claude)) "Claude")
+    ("m"   (org-drafts--dispatch (org-drafts-email)) "Email")
+    ("r"   (org-drafts--dispatch (org-drafts-rewrite)) "Rewrite"))
    "Quick actions for handling Org drafts."))
 
 (defun org-drafts-action (&optional arg)
@@ -352,6 +428,30 @@ activation when editing existing DRAFT or SCRAP entries."
           (member (org-get-todo-state) '("DRAFT" "SCRAP")))
     (org-drafts/body)
     t))
+
+;;;###autoload
+(defun org-drafts-act-on-region (beg end)
+  "Activate the org-drafts hydra to act on every DRAFT in the region.
+BEG and END are the bounds of the active region.  The selected hydra
+action is applied once to each DRAFT entry whose heading line lies
+between BEG and END.
+
+The hydra is non-blocking: `pretty-hydra-define' installs a transient
+keymap and returns immediately, so cleanup happens later from the
+hydra's :after-exit hook (`org-drafts--release-region-bounds').  Any
+stale region bounds from a prior invocation are released before the new
+ones are stored, so leaks from abnormal exits do not accumulate.
+
+Interactively, BEG and END default to the active region; signals an
+error if no region is active."
+  (interactive "r")
+  (unless (use-region-p)
+    (user-error "No active region"))
+  (org-drafts--release-region-bounds)
+  (deactivate-mark)
+  (setq org-drafts--region-bounds
+        (cons (copy-marker beg) (copy-marker end)))
+  (org-drafts/body))
 
 (defun org-drafts-install ()
   "Install Org-drafts key bindings and hooks.
