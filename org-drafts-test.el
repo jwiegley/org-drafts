@@ -343,6 +343,87 @@ at-capture-end-func when in capture mode."
     (org-drafts-copy-to-clipboard)
     (should (equal "Actual content" (car kill-ring)))))
 
+;;; ---- Tests for org-drafts-prompt ----
+
+(ert-deftest org-drafts-test-prompt-changes-keyword ()
+  "org-drafts-prompt should change DRAFT to PROMPT."
+  (org-drafts-test--with-capture-buffer
+      "* DRAFT [2025-07-14 Mon]\nMy prompt body\n"
+    (let ((org-drafts-task-body-function (lambda (_h _b _e) nil)))
+      (org-drafts-prompt))
+    (goto-char (point-min))
+    (should (looking-at-p "^\\* PROMPT "))))
+
+(ert-deftest org-drafts-test-prompt-copies-body-to-clipboard ()
+  "org-drafts-prompt should put the body text on the kill ring."
+  (org-drafts-test--with-capture-buffer
+      "* DRAFT [2025-07-14 Mon]\nFirst line\nSecond line\n"
+    (let ((org-drafts-task-body-function (lambda (_h _b _e) nil)))
+      (org-drafts-prompt))
+    (should (equal "First line\nSecond line" (car kill-ring)))))
+
+(ert-deftest org-drafts-test-prompt-copies-original-not-processed ()
+  "Body should be copied before the body function rewrites it.
+With the default body function, the first body line is moved into the
+heading.  The clipboard should still contain the unmodified body."
+  (org-drafts-test--with-capture-buffer
+      "* DRAFT [2025-07-14 Mon]\nMy first line\nMore body\n"
+    (let ((org-drafts-task-body-function
+           #'org-drafts-default-body-function))
+      (org-drafts-prompt))
+    (should (equal "My first line\nMore body" (car kill-ring)))
+    (goto-char (point-min))
+    (should (looking-at-p "^\\* PROMPT My first line$"))))
+
+(ert-deftest org-drafts-test-prompt-runs-task-body-function ()
+  "org-drafts-prompt should call `org-drafts-task-body-function'."
+  (let ((called nil))
+    (org-drafts-test--with-capture-buffer
+        "* DRAFT Test\nBody\n"
+      (let ((org-drafts-task-body-function
+             (lambda (_h _b _e) (setq called t))))
+        (org-drafts-prompt)))
+    (should called)))
+
+(ert-deftest org-drafts-test-prompt-alt-uses-alt-body-function ()
+  "With ALT non-nil, `org-drafts-alt-task-body-function' should be used."
+  (let ((default-called nil)
+        (alt-called nil))
+    (org-drafts-test--with-capture-buffer
+        "* DRAFT Test\nBody\n"
+      (let ((org-drafts-task-body-function
+             (lambda (_h _b _e) (setq default-called t)))
+            (org-drafts-alt-task-body-function
+             (lambda (_h _b _e) (setq alt-called t))))
+        (org-drafts-prompt t)))
+    (should alt-called)
+    (should-not default-called)))
+
+(ert-deftest org-drafts-test-prompt-alt-errors-when-unset ()
+  "Calling with ALT non-nil should error when alt body fn is unset."
+  (org-drafts-test--with-capture-buffer
+      "* DRAFT Test\nBody\n"
+    (let ((org-drafts-alt-task-body-function nil))
+      (should-error (org-drafts-prompt t) :type 'user-error))))
+
+(ert-deftest org-drafts-test-prompt-on-scrap-entry ()
+  "org-drafts-prompt should also convert SCRAP to PROMPT."
+  (org-drafts-test--with-capture-buffer
+      "* SCRAP [2025-07-14 Mon]\nLeftover text\n"
+    (let ((org-drafts-task-body-function (lambda (_h _b _e) nil)))
+      (org-drafts-prompt))
+    (goto-char (point-min))
+    (should (looking-at-p "^\\* PROMPT "))
+    (should (equal "Leftover text" (car kill-ring)))))
+
+(ert-deftest org-drafts-test-prompt-trims-body ()
+  "Body text on the kill ring should be trimmed."
+  (org-drafts-test--with-capture-buffer
+      "* DRAFT Test\n  padded body  \n"
+    (let ((org-drafts-task-body-function (lambda (_h _b _e) nil)))
+      (org-drafts-prompt))
+    (should (equal "padded body" (car kill-ring)))))
+
 ;;; ---- Tests for org-drafts-action ----
 
 (ert-deftest org-drafts-test-action-draft-calls-hydra ()

@@ -250,6 +250,28 @@ formatting it."
                   (use-region-p))
                str))))))))
 
+(defun org-drafts-prompt (&optional alt)
+  "Change DRAFT/SCRAP to PROMPT and copy body text to the clipboard.
+With ALT non-nil, process the body with
+`org-drafts-alt-task-body-function' instead of
+`org-drafts-task-body-function'.  The body text is captured before
+the body function runs, so the original (unmodified) content is what
+ends up on the kill ring regardless of any title extraction performed
+by the body function."
+  (interactive "P")
+  (let ((body-fn
+         (if alt
+             (or org-drafts-alt-task-body-function
+                 (user-error
+                  "`org-drafts-alt-task-body-function' is not set"))
+           org-drafts-task-body-function)))
+    (org-drafts-with-change-to "PROMPT"
+      (lambda (heading-pos beg end)
+        (let ((str (string-trim
+                    (buffer-substring-no-properties beg end))))
+          (funcall body-fn heading-pos beg end)
+          (kill-new str))))))
+
 (defun org-drafts-gptel ()
   "Send draft to GPTel chat buffer.
 Changes heading to SCRAP before sending.
@@ -382,14 +404,13 @@ Result copied to kill ring.")))))))))))
   ("Org"
    (("n"   (org-drafts--dispatch (org-drafts-change "NOTE")) "NOTE")
     ("t"   (org-drafts--dispatch (org-drafts-change "TODO")) "TODO")
-    ("p"   (org-drafts--dispatch (org-drafts-change "PROMPT")) "PROMPT")
+    ("p"   (org-drafts--dispatch (org-drafts-prompt)) "PROMPT")
     ("q"   (org-drafts--dispatch (org-drafts-change "QUOTE")) "QUOTE")
     ("N"   (org-drafts--dispatch (org-drafts-change-alt "NOTE"))
      "NOTE (alt)")
     ("T"   (org-drafts--dispatch (org-drafts-change-alt "TODO"))
      "TODO (alt)")
-    ("P"   (org-drafts--dispatch (org-drafts-change-alt "PROMPT"))
-     "PROMPT (alt)")
+    ("P"   (org-drafts--dispatch (org-drafts-prompt t)) "PROMPT (alt)")
     ("Q"   (org-drafts--dispatch (org-drafts-change-alt "QUOTE"))
      "QUOTE (alt)")
     ("d"   org-capture-finalize "DRAFT")
