@@ -33,6 +33,7 @@
       # Development/CI dependencies
       devDeps = epkgs: [
         epkgs.package-lint
+        epkgs.undercover
       ];
 
       # Emacs with all runtime deps for building and checks
